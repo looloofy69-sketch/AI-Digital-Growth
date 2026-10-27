@@ -111,6 +111,9 @@ def test_dispatch_gate_and_late_optout_reconciliation(conn):
     # Provider acceptance must still be recorded truthfully if suppression arrives after submission.
     conn.execute("UPDATE dispatch_attempts SET status='accepted',provider_name='test-provider',provider_message_id=%s WHERE id=%s",
                  (f"message-{attempt}",attempt))
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid dispatch state transition"):
+        with conn.transaction():
+            conn.execute("UPDATE dispatch_attempts SET status='failed' WHERE id=%s",(attempt,))
 
 
 def test_active_suppression_blocks_new_dispatch(conn):
@@ -126,7 +129,7 @@ def test_rejected_latest_review_invalidates_a_previously_verified_finding(conn):
     _, _, draft = make_approved_draft(conn)
     finding = conn.execute("SELECT finding_id FROM outbound_draft_claims WHERE draft_id=%s",(draft,)).fetchone()[0]
     conn.execute("INSERT INTO finding_reviews(id,finding_id,review_result,reviewer_type,reviewer_id,verifier_version,rationale,reviewed_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                 (uuid.uuid4(),finding,"rejected","human","second-reviewer","v2","Second review contradicted the claim",NOW+timedelta(seconds=5)))
+                 (uuid.UUID(int=(1<<128)-1),finding,"rejected","human","second-reviewer","v2","Second review contradicted the claim",NOW))
     state = conn.execute("SELECT state FROM findings WHERE id=%s",(finding,)).fetchone()[0]
     assert state == "rejected"
     with pytest.raises(psycopg.errors.RaiseException, match="unverified"):
@@ -134,7 +137,7 @@ def test_rejected_latest_review_invalidates_a_previously_verified_finding(conn):
                      (uuid.uuid4(),draft,f"invalidated-{uuid.uuid4()}","queued"))
 
 
-def test_suppression_rules_cannot_be_deleted(conn):
+def test_suppression_rules_require_attributed_revocation_and_cannot_be_deleted(conn):
     _, address_hash, _ = make_approved_draft(conn)
     rule = uuid.uuid4()
     conn.execute("INSERT INTO suppression_rules(id,subject_type,subject_hash,channel,scope_type,scope_key,status,reason,created_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
@@ -142,7 +145,43 @@ def test_suppression_rules_cannot_be_deleted(conn):
     created = conn.execute("SELECT count(*) FROM suppression_events WHERE suppression_rule_id=%s AND event_type='created'",(rule,)).fetchone()[0]
     assert created == 1
     with pytest.raises(psycopg.errors.RaiseException, match="cannot be deleted"):
-        conn.execute("DELETE FROM suppression_rules WHERE id=%s",(rule,))
+        with conn.transaction():
+            conn.execute("DELETE FROM suppression_rules WHERE id=%s",(rule,))
+    with pytest.raises(psycopg.errors.RaiseException, match="identity and creation facts are immutable"):
+        with conn.transaction():
+            conn.execute("UPDATE suppression_rules SET scope_key='FR' WHERE id=%s",(rule,))
+    conn.execute("UPDATE suppression_rules SET status='revoked',revoked_by='operator',revoked_at=clock_timestamp(),revocation_reason='reviewed duplicate opt-out' WHERE id=%s",(rule,))
+    events = conn.execute("SELECT event_type,actor FROM suppression_events WHERE suppression_rule_id=%s",(rule,)).fetchall()
+    assert {event[0] for event in events} == {"created","revoked"}
+    assert next(event[1] for event in events if event[0]=="revoked") == "operator"
+    with pytest.raises(psycopg.errors.RaiseException, match="only transition once"):
+        with conn.transaction():
+            conn.execute("UPDATE suppression_rules SET status='active',revoked_by=NULL,revoked_at=NULL,revocation_reason=NULL WHERE id=%s",(rule,))
+
+
+def test_draft_content_or_target_change_resets_approval(conn):
+    _, _, draft = make_approved_draft(conn)
+    with pytest.raises(psycopg.errors.RaiseException, match="without a new canonical content hash"):
+        with conn.transaction():
+            conn.execute("UPDATE outbound_drafts SET organization_contact_id=%s WHERE id=%s",(uuid.uuid4(),draft))
+    new_body = "Changed reviewed test message"
+    new_hash = hashlib.sha256(new_body.encode("utf-8")).hexdigest()
+    conn.execute("UPDATE outbound_drafts SET body=%s,content_hash=%s,status='approved' WHERE id=%s",(new_body,new_hash,draft))
+    row = conn.execute("SELECT status,content_hash FROM outbound_drafts WHERE id=%s",(draft,)).fetchone()
+    assert row[0] == "needs_review"
+    assert row[1].strip() == new_hash
+    with pytest.raises(psycopg.errors.RaiseException, match="approved draft"):
+        conn.execute("INSERT INTO dispatch_attempts(id,draft_id,idempotency_key,status) VALUES (%s,%s,%s,%s)",
+                     (uuid.uuid4(),draft,f"needs-review-{uuid.uuid4()}","queued"))
+
+
+def test_future_finding_review_timestamp_is_rejected(conn):
+    _, _, draft = make_approved_draft(conn)
+    finding = conn.execute("SELECT finding_id FROM outbound_draft_claims WHERE draft_id=%s",(draft,)).fetchone()[0]
+    with pytest.raises(psycopg.errors.RaiseException, match="cannot be in the future"):
+        with conn.transaction():
+            conn.execute("INSERT INTO finding_reviews(id,finding_id,review_result,reviewer_type,reviewer_id,verifier_version,rationale,reviewed_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                         (uuid.uuid4(),finding,"verified","human","future-reviewer","v2","future test",datetime.now(timezone.utc)+timedelta(days=1)))
 
 
 def test_dispatch_transition_machine_rejects_illegal_jump(conn):

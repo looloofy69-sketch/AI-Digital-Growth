@@ -99,6 +99,21 @@ CREATE TABLE finding_reviews (
 );
 CREATE INDEX finding_reviews_latest_idx ON finding_reviews(finding_id,reviewed_at DESC,id DESC);
 
+CREATE FUNCTION validate_finding_review_time() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE latest_reviewed_at TIMESTAMPTZ; latest_review_id UUID;
+BEGIN
+ IF NEW.reviewed_at IS NULL OR NEW.reviewed_at>clock_timestamp() THEN
+   RAISE EXCEPTION 'finding review timestamp cannot be in the future';
+ END IF;
+ SELECT reviewed_at,id INTO latest_reviewed_at,latest_review_id FROM finding_reviews
+ WHERE finding_id=NEW.finding_id ORDER BY reviewed_at DESC,id DESC LIMIT 1;
+ IF FOUND AND (NEW.reviewed_at<latest_reviewed_at OR (NEW.reviewed_at=latest_reviewed_at AND NEW.id<=latest_review_id)) THEN
+   RAISE EXCEPTION 'finding review timestamps and tie-break IDs must move forward';
+ END IF;
+ RETURN NEW;
+END; $$;
+CREATE TRIGGER finding_review_time_guard BEFORE INSERT ON finding_reviews FOR EACH ROW EXECUTE FUNCTION validate_finding_review_time();
+
 CREATE FUNCTION apply_finding_review_result() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.review_result='rejected' THEN
@@ -152,7 +167,7 @@ CREATE TABLE suppression_rules (
  CHECK (octet_length(subject_hash) >= 32),
  CHECK ((scope_type='global' AND scope_key='*') OR (scope_type<>'global' AND scope_key<>'*')),
  CHECK ((status='active' AND revoked_at IS NULL AND revoked_by IS NULL AND revocation_reason IS NULL)
-     OR (status='revoked' AND revoked_at IS NOT NULL AND revoked_by IS NOT NULL AND length(trim(revocation_reason))>0))
+     OR (status='revoked' AND revoked_at IS NOT NULL AND revoked_by IS NOT NULL AND revocation_reason IS NOT NULL AND length(trim(revocation_reason))>0))
 );
 CREATE UNIQUE INDEX suppression_active_rule_unique ON suppression_rules(subject_type,subject_hash,channel,scope_type,scope_key) WHERE status='active';
 CREATE INDEX suppression_subject_lookup_idx ON suppression_rules(subject_type,subject_hash,channel) WHERE status='active';
@@ -166,6 +181,12 @@ CREATE TABLE suppression_events (
 
 CREATE FUNCTION enforce_suppression_rule_lifecycle() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+ IF TG_OP='INSERT' THEN
+   IF NEW.status<>'active' OR NEW.revoked_by IS NOT NULL OR NEW.revoked_at IS NOT NULL OR NEW.revocation_reason IS NOT NULL THEN
+     RAISE EXCEPTION 'suppression rules must be created active and cannot be pre-revoked';
+   END IF;
+   RETURN NEW;
+ END IF;
  IF TG_OP='DELETE' THEN
    RAISE EXCEPTION 'suppression rules cannot be deleted; revoke with an attributable event';
  END IF;
@@ -186,7 +207,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END; $$;
-CREATE TRIGGER suppression_rule_lifecycle BEFORE UPDATE OR DELETE ON suppression_rules
+CREATE TRIGGER suppression_rule_lifecycle BEFORE INSERT OR UPDATE OR DELETE ON suppression_rules
  FOR EACH ROW EXECUTE FUNCTION enforce_suppression_rule_lifecycle();
 
 CREATE FUNCTION audit_suppression_rule_change() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -311,6 +332,22 @@ BEGIN
 END; $$;
 CREATE TRIGGER verified_finding_basis BEFORE INSERT OR UPDATE OF state ON findings
  FOR EACH ROW EXECUTE FUNCTION enforce_verified_finding_basis();
+
+CREATE FUNCTION guard_outbound_draft_mutations() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE context_changed BOOLEAN;
+BEGIN
+ IF NEW.id IS DISTINCT FROM OLD.id OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN RAISE EXCEPTION 'draft identity and creation timestamp are immutable'; END IF;
+ context_changed := NEW.opportunity_id IS DISTINCT FROM OLD.opportunity_id OR NEW.organization_contact_id IS DISTINCT FROM OLD.organization_contact_id
+   OR NEW.source_record_id IS DISTINCT FROM OLD.source_record_id OR NEW.policy_decision_id IS DISTINCT FROM OLD.policy_decision_id
+   OR NEW.market_code IS DISTINCT FROM OLD.market_code OR NEW.recipient_type IS DISTINCT FROM OLD.recipient_type
+   OR NEW.channel IS DISTINCT FROM OLD.channel OR NEW.purpose IS DISTINCT FROM OLD.purpose OR NEW.campaign_code IS DISTINCT FROM OLD.campaign_code
+   OR NEW.subject IS DISTINCT FROM OLD.subject OR NEW.body IS DISTINCT FROM OLD.body;
+ IF context_changed AND NEW.content_hash IS NOT DISTINCT FROM OLD.content_hash THEN RAISE EXCEPTION 'draft content or target changed without a new canonical content hash'; END IF;
+ IF context_changed OR NEW.content_hash IS DISTINCT FROM OLD.content_hash THEN NEW.status := 'needs_review'; END IF;
+ NEW.updated_at := GREATEST(OLD.updated_at,clock_timestamp()); RETURN NEW;
+END; $$;
+CREATE TRIGGER a_draft_content_guard BEFORE UPDATE ON outbound_drafts FOR EACH ROW EXECUTE FUNCTION guard_outbound_draft_mutations();
+COMMENT ON COLUMN outbound_drafts.content_hash IS 'Application-computed SHA-256 of canonical JSON covering recipient/market/channel/purpose, source/policy, subject/body and linked finding versions. Any target/content changes require a new hash and reset approval; database does not recompute the digest.';
 
 CREATE FUNCTION enforce_draft_approval_basis() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -442,6 +479,7 @@ BEGIN
  IF NEW.status<>'accepted' AND NEW.provider_message_id IS DISTINCT FROM OLD.provider_message_id THEN
    RAISE EXCEPTION 'provider message ID may only be set on accepted status';
  END IF;
+ NEW.updated_at := GREATEST(OLD.updated_at,clock_timestamp());
  RETURN NEW;
 END; $$;
 CREATE TRIGGER dispatch_transition_guard BEFORE INSERT OR UPDATE ON dispatch_attempts

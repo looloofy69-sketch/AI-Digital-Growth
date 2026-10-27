@@ -43,6 +43,11 @@ Do not promote a stage based on aggregate accuracy alone. Require representative
 16. A later rejected/retest-required finding review invalidates a previously verified claim.
 17. Suppression rules cannot be deleted or rewritten; revocation is attributed and logged.
 18. Dispatch state transitions reject illegal jumps and accepted outcomes are terminal facts.
+19. A finding review cannot be backdated or future-dated.
+20. Changing draft target/context/content invalidates approval and requires a new canonical hash.
+16. A later rejected/retest-required finding review invalidates a previously verified claim.
+17. Suppression rules cannot be deleted or rewritten; revocation is attributed and logged.
+18. Dispatch state transitions reject illegal jumps and accepted outcomes are terminal facts.
 
 ## Reporting template
 
