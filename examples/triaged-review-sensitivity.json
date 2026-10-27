@@ -1,0 +1,29 @@
+{
+  "scenario_name": "unvalidated_10_percent_human_review_sensitivity",
+  "currency": "EUR",
+  "contacts_per_month": 1650,
+  "human_review_share": 0.1,
+  "reviews_per_contact": 1.0,
+  "minutes_per_review": 15,
+  "research_minutes_per_contact": 2,
+  "sales_minutes_per_attended_meeting": 45,
+  "proposal_hours_per_proposal": 1.0,
+  "delivery_hours_per_client": 24,
+  "support_hours_per_client": 2,
+  "fixed_operations_hours_per_month": 20,
+  "available_hours_per_week": 50,
+  "weeks_per_month": 4,
+  "capacity_reserve_fraction": 0.2,
+  "loaded_hourly_cost": 25,
+  "revenue_per_client": 1200,
+  "direct_delivery_cost_per_client": 150,
+  "fixed_tools_cost_per_month": 500,
+  "cash_acquisition_cost_per_contact": 0.0,
+  "funnel": {
+    "positive_reply_rate": 0.03,
+    "meeting_booked_per_positive_reply": 0.6,
+    "meeting_attendance_rate": 0.8,
+    "proposal_rate_per_attended_meeting": 0.7,
+    "proposal_win_rate": 0.3
+  }
+}

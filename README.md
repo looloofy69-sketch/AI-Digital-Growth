@@ -1,46 +1,36 @@
 # AI Digital Growth
 
-**Purpose:** Build a commercially viable, evidence-driven digital growth and business-automation company, supported by an operating system that identifies real customer problems, proves them, sells bounded solutions, delivers reliably, and measures client outcomes.
+Build a commercially viable, evidence-driven digital growth and business-automation company. The system should identify real customer problems, prove them, sell bounded solutions, deliver reliably and measure client outcomes.
 
-**Strategic principle:** Global intelligence; market-specific validation and execution.
-
-This repository is the working source of truth for architecture, implementation priorities, validation rules, and operating decisions. It begins as a documentation-first baseline; no application code or production workflow is claimed to exist yet.
-
-## Current status (2026-10-27)
-
-- The correct remote is [looloofy69-sketch/AI-Digital-Growth](https://github.com/looloofy69-sketch/AI-Digital-Growth).
-- The repository was confirmed empty before this initialization.
-- The strategy foundation and blueprint are preserved in the companion repository starter ZIP; the original DOCX/PDF files are not committed in this initial source-control baseline.
-- Application code, database migrations, provider integrations, live campaigns, and automated test results remain **not implemented / unverified**.
-- Commercial assumptions (market, segment, pricing, funnel, margins) remain hypotheses until validated with buyers and paid pilots.
-- Market-specific legal/provider-policy review is required before enabling outbound workflows.
+**Architecture direction:** global intelligence core with independently validated market adapters. Research and benchmark globally; validate demand, pricing, legal rules, conversion, delivery cost and retention separately in each market.
 
 ## Start here
 
-1. docs/reviews/2026-10-27-repository-and-blueprint-review.md — corrections, gaps and first priorities.
-2. docs/architecture/system-overview.md — system boundaries and core pipeline.
-3. docs/architecture/market-adapters.md — global intelligence with independent market validation.
-4. docs/architecture/data-model-gap-register.md — data integrity risks and required entities.
-5. docs/implementation/implementation-backlog.md — implementation order and acceptance criteria.
-6. docs/validation/verification-plan.md — failure-mode testing and autonomy gates.
-7. docs/operations/initial-operating-gates.md — minimum controls for claims, outreach and delivery.
-8. docs/reviews/2026-10-27-grok-workspace-assessment.md — what to reuse from the uploaded Helm workspace, and what not to copy.
-9. docs/templates/ — decision and assumption record templates.
-10. docs/decisions/ — explicit decisions and unresolved choices.
+- System overview: docs/architecture/system-overview.md
+- Global/market adapters: docs/architecture/market-adapters.md
+- Data-model gaps: docs/architecture/data-model-gap-register.md
+- Implementation backlog: docs/implementation/implementation-backlog.md
+- First executable slice and verification status: docs/implementation/first-slice.md
+- Test/acceptance plan: docs/validation/verification-plan.md
+- Grok/Helm workspace assessment: docs/reviews/2026-10-27-grok-workspace-assessment.md
+- Decision and assumption templates: docs/templates/
 
-## Core flow
+## First executable slice
 
-Discover → normalize/provenance → audit → independently verify → qualify/route → market/channel policy gate → human approval where required → send/deliver → measure outcomes → learn and improve.
+- Capacity/unit economics scenario calculator.
+- Fail-closed outbound draft eligibility gate; no live sending.
+- PostgreSQL schema for provenance, audit evidence, verification, source/purpose policy, suppression, content-hash approval, idempotency, costs and outcome snapshots.
+- Unit tests, PostgreSQL integration tests and GitHub Actions CI.
 
-The canonical data store must own lifecycle state, approvals, evidence references, cost records, suppression, and idempotency. Workflow orchestrators and vendors are replaceable execution adapters, not sources of truth.
+## Run locally
 
-## Scope discipline
+- Install unit-test dependencies: python -m pip install -e '.[test]'
+- Run examples: adg-economics examples/illustrative-baseline.json
+- Run tests: pytest -q
+- For DB tests, install python -m pip install -e '.[test,postgres]', set DATABASE_URL to a disposable PostgreSQL 16 database, run python scripts/apply_migrations.py, then pytest -q.
 
-Research and benchmark globally; validate demand, pricing, legality, conversion, delivery cost, and retention separately for each market and offer. Serving multiple markets is a strategic option, not a requirement to launch everywhere simultaneously.
+## Limits
 
-## Initial non-goals
+No lead-source connector, public API/UI, website fetcher, email provider, live sending, authentication or production deployment has been implemented. Local DB integration is not verified until the GitHub Actions PostgreSQL job passes. Example funnel/pricing/time values are assumptions, not market observations or a forecast. Do not enable outbound before source terms, market/channel rules, legal clearance, capacity and evaluation requirements pass. Never copy platform-specific preview credentials from Helm into this repository.
 
-- Building a generalized multi-agent platform before paid demand is demonstrated.
-- High-volume outbound before policy, provider, deliverability, suppression, and capacity gates are tested.
-- Publishing AI content at scale without audience value, editorial verification, and measurement.
-- Treating generated findings or generated code as verified merely because an LLM produced them.
+**Rule:** untested means UNVERIFIED, not PASS.
