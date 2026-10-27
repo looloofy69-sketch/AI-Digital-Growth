@@ -17,7 +17,7 @@
 - **PASS:** `PYTHONPATH=src pytest -q` — 39 passed; 1 PostgreSQL integration module skipped locally because psycopg is unavailable.
 - **PASS:** compileall succeeded.
 - **PASS:** audit tests cover URL restrictions, private/mixed DNS rejection, checked-IP connection pinning, TLS hostname, redirect revalidation/loops, response-size/compression limits, evidence hashes and CLI behavior. These tests use fake network primitives and contact no external websites.
-- **PASS (previous commit):** GitHub Actions run 40438604100 on commit a0b8923413886d9a5926355ede9ab7c4c206bac1 provisioned PostgreSQL 16, applied the initial migration and reported 40 tests passed. A fresh CI run is required for the audit-enabled commit.
+- **PASS:** GitHub Actions run [40439626158](https://github.com/looloofy69-sketch/AI-Digital-Growth/actions/runs/40439626158) on commit `43630ddfde3caaec203498c750c257bcf91ecc84` provisioned PostgreSQL 16, applied migration `0001_initial_core.sql`, and reported **49 tests passed**.
 - **UNVERIFIED locally:** PostgreSQL integration tests are skipped because psycopg is absent in the local sandbox.
 - **NOT RUN:** external sending, live website audit against a real website, legal review, production deployment, authentication, penetration tests or paid-market validation.
 
