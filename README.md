@@ -24,7 +24,9 @@ This repository is the working source of truth for architecture, implementation 
 5. docs/implementation/implementation-backlog.md — implementation order and acceptance criteria.
 6. docs/validation/verification-plan.md — failure-mode testing and autonomy gates.
 7. docs/operations/initial-operating-gates.md — minimum controls for claims, outreach and delivery.
-8. docs/decisions/ — explicit decisions and unresolved choices.
+8. docs/reviews/2026-10-27-grok-workspace-assessment.md — what to reuse from the uploaded Helm workspace, and what not to copy.
+9. docs/templates/ — decision and assumption record templates.
+10. docs/decisions/ — explicit decisions and unresolved choices.
 
 ## Core flow
 
