@@ -18,6 +18,7 @@ postgres = ["psycopg[binary]>=3.2"]
 
 [project.scripts]
 adg-economics = "ai_digital_growth.cli:main"
+adg-audit = "ai_digital_growth.audit:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

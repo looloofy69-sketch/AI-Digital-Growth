@@ -8,36 +8,36 @@
 - Dependency-free Python package for monthly funnel, capacity and unit-economics scenarios.
 - Fail-closed outbound-draft gate with exact market/recipient/channel/purpose/source matching, traceable legal/compliance clearance, evidence verification/freshness, suppression, and human approval.
 - Reply-action distinction: explicit opt-out globally suppresses; objection pauses for review; ambiguous replies pause automation; a negative reply ends the current campaign.
+- Bounded static website audit at src/ai_digital_growth/audit.py: one public HTTPS page per invocation, checked public-IP pinning, TLS hostname verification, redirect revalidation and body evidence hashes.
 - PostgreSQL migration modeling provenance, audits, evidence and finding review, opportunities, market policy, scoped suppression, approvals tied to the exact content hash, idempotency and dispatch state, append-only event history, costs and outcomes.
 - Transactional migration runner, example scenarios, unit tests, database integration tests and PostgreSQL 16 CI job.
 
-## Local verification (before repository sync)
+## Local verification
 
-- PASS: 30 Python unit/static/CLI tests passed.
-- PASS: compileall succeeded.
-- PASS: editable package installed in the available environment and CLI emitted valid JSON.
-- PASS: GitHub Actions on commit 38c6433562f98d41b15a75ef047cc955e4931d92 ran PostgreSQL 16, applied migration 0001, and reported 35 tests passed.
-- UNVERIFIED locally: PostgreSQL integration tests were skipped because PostgreSQL and psycopg were unavailable in the sandbox.
-- NOT RUN: live scraping, email provider integration, production deployment, authentication, legal review, penetration testing or paid-market validation.
+- **PASS:** `PYTHONPATH=src pytest -q` — 39 passed; 1 PostgreSQL integration module skipped locally because psycopg is unavailable.
+- **PASS:** compileall succeeded.
+- **PASS:** audit tests cover URL restrictions, private/mixed DNS rejection, checked-IP connection pinning, TLS hostname, redirect revalidation/loops, response-size/compression limits, evidence hashes and CLI behavior. These tests use fake network primitives and contact no external websites.
+- **PASS (previous commit):** GitHub Actions run 40438604100 on commit a0b8923413886d9a5926355ede9ab7c4c206bac1 provisioned PostgreSQL 16, applied the initial migration and reported 40 tests passed. A fresh CI run is required for the audit-enabled commit.
+- **UNVERIFIED locally:** PostgreSQL integration tests are skipped because psycopg is absent in the local sandbox.
+- **NOT RUN:** external sending, live website audit against a real website, legal review, production deployment, authentication, penetration tests or paid-market validation.
 
 ## Illustrative calculations
 
-The blueprint funnel rates imply 3.024 expected wins per 1,000 contacts. At 1,650 contacts, expected wins are 4.9896. One 15-minute human review per contact costs 412.5 hours before research, sales, delivery and support. The example models 651.68 hours against 160 usable hours, and a negative contribution of EUR 11,552.96 using illustrative revenue/labor/cost values. This exposes an overloaded scenario; it is not a real-world profitability claim.
-
-The 10% human review scenario is a sensitivity test, not evidence that remaining checks can safely be automated.
+The blueprint funnel rates imply 3.024 expected wins per 1,000 contacts. At 1,650 contacts, expected wins are 4.9896. One 15-minute human review per contact costs 412.5 hours before research, sales, delivery and support. The example models 651.68 hours against 160 usable hours and negative contribution of EUR 11,552.96 under illustrative pricing/cost inputs. This identifies an overloaded scenario; it is not observed profitability. The 10% human-review scenario is sensitivity analysis, not evidence that remaining checks can safely be automated.
 
 ## Explicit limitations
 
-1. The economics model is not an observed forecast; taxes, payment timing, refunds, bad debt and price/volume interactions are not fully modeled.
-2. The outbound gate has no provider adapter or send command. Dry-run eligibility is not external-send authorization.
-3. DB triggers recheck important invariants, but a production sender still needs transactional outbox design and per-subject synchronization at the final submission boundary. An external provider call is not atomic with a database transaction.
-4. The migration is for a fresh test database. Production migration/rollback review, database grants, auth and deployment are incomplete.
-5. Contact address hashes must use a documented keyed-hashing scheme; ciphertext and key management belong in the application/secret manager.
+1. Economics is a scenario calculator, not an observed forecast; taxes, payment timing, refunds, bad debt and price/volume interactions are not fully modeled.
+2. The outbound gate and database are controls only. No provider adapter or send command exists.
+3. Database checks cannot make an external provider call atomic with suppression. A production sender still needs a reviewed transactional outbox, concurrency handling and reconciliation protocol.
+4. The migration is intended for a fresh test database; production rollback, grants, auth and deployment are incomplete.
+5. The application must define a versioned keyed-hashing scheme and encryption/key management before storing real contact data.
+6. The website audit is static and single-page. It does not inspect rendered JavaScript, performance field data, screenshots or a full site crawl; findings need independent human verification.
 
 ## Next gates
 
-1. Get a green PostgreSQL CI run and repair every migration/test failure.
-2. Implement a bounded website-audit worker with SSRF controls, deterministic measurements and reproducible evidence.
-3. Add service persistence without live sending.
-4. Replace illustrative economics inputs with measured prospecting and delivery time/cost data from a paid pilot.
-5. Add outbound only after the legal/provider/source/capacity/evaluation gates have passed.
+1. Get a green PostgreSQL CI run for the audit-enabled commit and repair any failures.
+2. Review the fetcher against a wider SSRF/security matrix before public multi-tenant deployment.
+3. Add server-side service persistence without live sending.
+4. Replace illustrative economics inputs with measured prospecting and delivery costs from a paid pilot.
+5. Add a provider adapter only after exact market/channel/source rules, approvals, suppression, idempotency and reconciliation are tested.
