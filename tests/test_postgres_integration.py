@@ -104,7 +104,7 @@ def test_dispatch_gate_and_late_optout_reconciliation(conn):
     attempt = uuid.uuid4()
     conn.execute("INSERT INTO dispatch_attempts(id,draft_id,idempotency_key,status) VALUES (%s,%s,%s,%s)",
                  (attempt,draft,f"idem-{attempt}","queued"))
-    conn.execute("UPDATE dispatch_attempts SET status='claimed' WHERE id=%s",(attempt,))
+    conn.execute("UPDATE dispatch_attempts SET status='claimed',attempt_count=1 WHERE id=%s",(attempt,))
     conn.execute("UPDATE dispatch_attempts SET status='submitting' WHERE id=%s",(attempt,))
     conn.execute("INSERT INTO suppression_rules(id,subject_type,subject_hash,channel,scope_type,scope_key,status,reason,created_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                  (uuid.uuid4(),"contact_point",addr_hash,"all","global","*","active","late opt-out","test"))
@@ -120,6 +120,38 @@ def test_active_suppression_blocks_new_dispatch(conn):
     with pytest.raises(psycopg.errors.RaiseException, match="suppression"):
         conn.execute("INSERT INTO dispatch_attempts(id,draft_id,idempotency_key,status) VALUES (%s,%s,%s,%s)",
                      (uuid.uuid4(),draft,f"blocked-{uuid.uuid4()}","queued"))
+
+
+def test_rejected_latest_review_invalidates_a_previously_verified_finding(conn):
+    _, _, draft = make_approved_draft(conn)
+    finding = conn.execute("SELECT finding_id FROM outbound_draft_claims WHERE draft_id=%s",(draft,)).fetchone()[0]
+    conn.execute("INSERT INTO finding_reviews(id,finding_id,review_result,reviewer_type,reviewer_id,verifier_version,rationale,reviewed_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                 (uuid.uuid4(),finding,"rejected","human","second-reviewer","v2","Second review contradicted the claim",NOW+timedelta(seconds=5)))
+    state = conn.execute("SELECT state FROM findings WHERE id=%s",(finding,)).fetchone()[0]
+    assert state == "rejected"
+    with pytest.raises(psycopg.errors.RaiseException, match="unverified"):
+        conn.execute("INSERT INTO dispatch_attempts(id,draft_id,idempotency_key,status) VALUES (%s,%s,%s,%s)",
+                     (uuid.uuid4(),draft,f"invalidated-{uuid.uuid4()}","queued"))
+
+
+def test_suppression_rules_cannot_be_deleted(conn):
+    _, address_hash, _ = make_approved_draft(conn)
+    rule = uuid.uuid4()
+    conn.execute("INSERT INTO suppression_rules(id,subject_type,subject_hash,channel,scope_type,scope_key,status,reason,created_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                 (rule,"contact_point",address_hash,"all","global","*","active","explicit opt-out","reply-handler"))
+    created = conn.execute("SELECT count(*) FROM suppression_events WHERE suppression_rule_id=%s AND event_type='created'",(rule,)).fetchone()[0]
+    assert created == 1
+    with pytest.raises(psycopg.errors.RaiseException, match="cannot be deleted"):
+        conn.execute("DELETE FROM suppression_rules WHERE id=%s",(rule,))
+
+
+def test_dispatch_transition_machine_rejects_illegal_jump(conn):
+    _, _, draft = make_approved_draft(conn)
+    attempt = uuid.uuid4()
+    conn.execute("INSERT INTO dispatch_attempts(id,draft_id,idempotency_key,status) VALUES (%s,%s,%s,%s)",
+                 (attempt,draft,f"bad-transition-{attempt}","queued"))
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid dispatch state transition"):
+        conn.execute("UPDATE dispatch_attempts SET status='submitting' WHERE id=%s",(attempt,))
 
 
 def test_finding_cannot_be_verified_without_review(conn):

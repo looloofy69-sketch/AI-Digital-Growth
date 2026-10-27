@@ -16,6 +16,7 @@
 - PASS: 30 Python unit/static/CLI tests passed.
 - PASS: compileall succeeded.
 - PASS: editable package installed in the available environment and CLI emitted valid JSON.
+- PASS: GitHub Actions on commit 38c6433562f98d41b15a75ef047cc955e4931d92 ran PostgreSQL 16, applied migration 0001, and reported 35 tests passed.
 - UNVERIFIED locally: PostgreSQL integration tests were skipped because PostgreSQL and psycopg were unavailable in the sandbox.
 - NOT RUN: live scraping, email provider integration, production deployment, authentication, legal review, penetration testing or paid-market validation.
 

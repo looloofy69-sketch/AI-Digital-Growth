@@ -99,6 +99,18 @@ CREATE TABLE finding_reviews (
 );
 CREATE INDEX finding_reviews_latest_idx ON finding_reviews(finding_id,reviewed_at DESC,id DESC);
 
+CREATE FUNCTION apply_finding_review_result() RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+ IF NEW.review_result='rejected' THEN
+   UPDATE findings SET state='rejected' WHERE id=NEW.finding_id AND state<>'rejected';
+ ELSIF NEW.review_result='retest_required' THEN
+   UPDATE findings SET state='stale' WHERE id=NEW.finding_id AND state IN ('verified','proposed');
+ END IF;
+ RETURN NEW;
+END; $;
+CREATE TRIGGER apply_finding_review_result AFTER INSERT ON finding_reviews
+ FOR EACH ROW EXECUTE FUNCTION apply_finding_review_result();
+
 CREATE TABLE opportunities (
  id UUID PRIMARY KEY, organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
  score NUMERIC(5,2) CHECK (score BETWEEN 0 AND 100), score_version TEXT NOT NULL,
@@ -136,10 +148,11 @@ CREATE TABLE suppression_rules (
  scope_type TEXT NOT NULL CHECK (scope_type IN ('global','market','purpose','campaign')),
  scope_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked')),
  reason TEXT NOT NULL, created_by TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
- revoked_by TEXT, revoked_at TIMESTAMPTZ,
+ revoked_by TEXT, revoked_at TIMESTAMPTZ, revocation_reason TEXT,
  CHECK (octet_length(subject_hash) >= 32),
  CHECK ((scope_type='global' AND scope_key='*') OR (scope_type<>'global' AND scope_key<>'*')),
- CHECK ((status='active' AND revoked_at IS NULL AND revoked_by IS NULL) OR (status='revoked' AND revoked_at IS NOT NULL AND revoked_by IS NOT NULL))
+ CHECK ((status='active' AND revoked_at IS NULL AND revoked_by IS NULL AND revocation_reason IS NULL)
+     OR (status='revoked' AND revoked_at IS NOT NULL AND revoked_by IS NOT NULL AND length(trim(revocation_reason))>0))
 );
 CREATE UNIQUE INDEX suppression_active_rule_unique ON suppression_rules(subject_type,subject_hash,channel,scope_type,scope_key) WHERE status='active';
 CREATE INDEX suppression_subject_lookup_idx ON suppression_rules(subject_type,subject_hash,channel) WHERE status='active';
@@ -150,6 +163,47 @@ CREATE TABLE suppression_events (
  actor TEXT NOT NULL, source_event_id TEXT, reason TEXT NOT NULL,
  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(), event_metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+
+CREATE FUNCTION enforce_suppression_rule_lifecycle() RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+ IF TG_OP='DELETE' THEN
+   RAISE EXCEPTION 'suppression rules cannot be deleted; revoke with an attributable event';
+ END IF;
+ IF OLD.status<>'active' OR NEW.status<>'revoked' THEN
+   RAISE EXCEPTION 'suppression rules may only transition once from active to revoked';
+ END IF;
+ IF NEW.id IS DISTINCT FROM OLD.id OR NEW.subject_type IS DISTINCT FROM OLD.subject_type
+    OR NEW.subject_hash IS DISTINCT FROM OLD.subject_hash OR NEW.channel IS DISTINCT FROM OLD.channel
+    OR NEW.scope_type IS DISTINCT FROM OLD.scope_type OR NEW.scope_key IS DISTINCT FROM OLD.scope_key
+    OR NEW.reason IS DISTINCT FROM OLD.reason OR NEW.created_by IS DISTINCT FROM OLD.created_by
+    OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+   RAISE EXCEPTION 'suppression rule identity and creation facts are immutable';
+ END IF;
+ IF NEW.revoked_by IS NULL OR length(trim(NEW.revoked_by))=0
+    OR NEW.revoked_at IS NULL OR NEW.revoked_at<OLD.created_at
+    OR NEW.revocation_reason IS NULL OR length(trim(NEW.revocation_reason))=0 THEN
+   RAISE EXCEPTION 'revocation requires actor, timestamp, and reason';
+ END IF;
+ RETURN NEW;
+END; $;
+CREATE TRIGGER suppression_rule_lifecycle BEFORE UPDATE OR DELETE ON suppression_rules
+ FOR EACH ROW EXECUTE FUNCTION enforce_suppression_rule_lifecycle();
+
+CREATE FUNCTION audit_suppression_rule_change() RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+ IF TG_OP='INSERT' THEN
+   INSERT INTO suppression_events(id,suppression_rule_id,event_type,actor,reason,occurred_at,event_metadata)
+   VALUES (gen_random_uuid(),NEW.id,'created',NEW.created_by,NEW.reason,NEW.created_at,
+           jsonb_build_object('scope_type',NEW.scope_type,'scope_key',NEW.scope_key,'channel',NEW.channel));
+ ELSIF OLD.status='active' AND NEW.status='revoked' THEN
+   INSERT INTO suppression_events(id,suppression_rule_id,event_type,actor,reason,occurred_at,event_metadata)
+   VALUES (gen_random_uuid(),NEW.id,'revoked',NEW.revoked_by,NEW.revocation_reason,NEW.revoked_at,
+           jsonb_build_object('scope_type',NEW.scope_type,'scope_key',NEW.scope_key,'channel',NEW.channel));
+ END IF;
+ RETURN NEW;
+END; $;
+CREATE TRIGGER suppression_rule_audit AFTER INSERT OR UPDATE OF status ON suppression_rules
+ FOR EACH ROW EXECUTE FUNCTION audit_suppression_rule_change();
 
 CREATE TABLE outbound_drafts (
  id UUID PRIMARY KEY, opportunity_id UUID NOT NULL REFERENCES opportunities(id) ON DELETE RESTRICT,
@@ -312,9 +366,14 @@ BEGIN
    IF NOT has_claims THEN RAISE EXCEPTION 'dispatch requires an evidence-backed finding claim'; END IF;
    SELECT EXISTS (SELECT 1 FROM outbound_draft_claims dc
       JOIN findings f ON f.id=dc.finding_id AND f.finding_version=dc.finding_version
-      WHERE dc.draft_id=draft.id AND (f.state<>'verified' OR NOT EXISTS
-        (SELECT 1 FROM finding_evidence fe JOIN evidence_artifacts ea ON ea.id=fe.evidence_artifact_id
-         WHERE fe.finding_id=f.id AND ea.captured_at+(f.freshness_window_days*interval '1 day')>now()))
+      WHERE dc.draft_id=draft.id AND (
+        f.state<>'verified'
+        OR NOT EXISTS (SELECT 1 FROM finding_reviews r WHERE r.finding_id=f.id AND r.review_result='verified'
+          AND NOT EXISTS (SELECT 1 FROM finding_reviews later WHERE later.finding_id=r.finding_id
+            AND (later.reviewed_at>r.reviewed_at OR (later.reviewed_at=r.reviewed_at AND later.id>r.id))))
+        OR NOT EXISTS (SELECT 1 FROM finding_evidence fe JOIN evidence_artifacts ea ON ea.id=fe.evidence_artifact_id
+          WHERE fe.finding_id=f.id AND ea.captured_at+(f.freshness_window_days*interval '1 day')>now())
+      )
    ) INTO has_invalid_claim;
    IF has_invalid_claim THEN RAISE EXCEPTION 'dispatch contains unverified, unsupported, or stale claims'; END IF;
    SELECT EXISTS (
@@ -337,6 +396,69 @@ BEGIN
  END IF;
  RETURN NEW;
 END; $$;
+CREATE FUNCTION enforce_dispatch_transition() RETURNS trigger LANGUAGE plpgsql AS $
+DECLARE allowed BOOLEAN := FALSE;
+BEGIN
+ IF TG_OP='INSERT' THEN
+   IF NEW.status<>'queued' OR NEW.attempt_count<>0 OR NEW.provider_message_id IS NOT NULL THEN
+     RAISE EXCEPTION 'new dispatch attempts must begin queued with zero attempts and no provider message ID';
+   END IF;
+   RETURN NEW;
+ END IF;
+ IF NEW.id IS DISTINCT FROM OLD.id OR NEW.draft_id IS DISTINCT FROM OLD.draft_id
+    OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+   RAISE EXCEPTION 'dispatch identity, draft, idempotency key, and creation time are immutable';
+ END IF;
+ IF NEW.attempt_count<OLD.attempt_count OR NEW.updated_at<OLD.updated_at THEN
+   RAISE EXCEPTION 'attempt count and update timestamp cannot move backwards';
+ END IF;
+ IF OLD.provider_message_id IS NOT NULL AND NEW.provider_message_id IS DISTINCT FROM OLD.provider_message_id THEN
+   RAISE EXCEPTION 'provider message ID is immutable once known';
+ END IF;
+ IF NEW.status=OLD.status THEN
+   IF NEW.attempt_count<>OLD.attempt_count THEN RAISE EXCEPTION 'attempt count changes only on a claim'; END IF;
+   IF OLD.status IN ('accepted','cancelled') AND (
+      NEW.provider_name IS DISTINCT FROM OLD.provider_name OR NEW.provider_message_id IS DISTINCT FROM OLD.provider_message_id) THEN
+     RAISE EXCEPTION 'terminal dispatch metadata is immutable';
+   END IF;
+   RETURN NEW;
+ END IF;
+ CASE OLD.status
+   WHEN 'queued' THEN allowed := NEW.status IN ('claimed','cancelled');
+   WHEN 'claimed' THEN allowed := NEW.status IN ('submitting','queued','failed','cancelled');
+   WHEN 'submitting' THEN allowed := NEW.status IN ('accepted','failed','outcome_unknown');
+   WHEN 'outcome_unknown' THEN allowed := NEW.status IN ('accepted','failed');
+   WHEN 'failed' THEN allowed := NEW.status='queued';
+   ELSE allowed := FALSE;
+ END CASE;
+ IF NOT allowed THEN
+   RAISE EXCEPTION 'invalid dispatch state transition: % -> %',OLD.status,NEW.status;
+ END IF;
+ IF OLD.status='queued' AND NEW.status='claimed' THEN
+   IF NEW.attempt_count<>OLD.attempt_count+1 THEN RAISE EXCEPTION 'claim must increment attempt_count exactly once'; END IF;
+ ELSIF NEW.attempt_count<>OLD.attempt_count THEN
+   RAISE EXCEPTION 'attempt_count increments only when queued work is claimed';
+ END IF;
+ IF NEW.status<>'accepted' AND NEW.provider_message_id IS DISTINCT FROM OLD.provider_message_id THEN
+   RAISE EXCEPTION 'provider message ID may only be set on accepted status';
+ END IF;
+ RETURN NEW;
+END; $;
+CREATE TRIGGER dispatch_transition_guard BEFORE INSERT OR UPDATE ON dispatch_attempts
+ FOR EACH ROW EXECUTE FUNCTION enforce_dispatch_transition();
+
+CREATE FUNCTION audit_dispatch_state_change() RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+ IF TG_OP='INSERT' OR NEW.status IS DISTINCT FROM OLD.status THEN
+   INSERT INTO dispatch_events(id,dispatch_attempt_id,event_type,occurred_at,reason,event_metadata)
+   VALUES (gen_random_uuid(),NEW.id,NEW.status,NEW.updated_at,
+           NEW.last_error_summary,jsonb_build_object('attempt_count',NEW.attempt_count,'provider_name',NEW.provider_name));
+ END IF;
+ RETURN NEW;
+END; $;
+CREATE TRIGGER dispatch_state_audit AFTER INSERT OR UPDATE OF status ON dispatch_attempts
+ FOR EACH ROW EXECUTE FUNCTION audit_dispatch_state_change();
+
 CREATE TRIGGER dispatch_final_gate BEFORE INSERT OR UPDATE OF status ON dispatch_attempts
  FOR EACH ROW EXECUTE FUNCTION enforce_dispatch_gate();
 

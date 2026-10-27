@@ -40,6 +40,9 @@ Do not promote a stage based on aggregate accuracy alone. Require representative
 13. Market lacking an approved policy is blocked regardless of score.
 14. Project cannot be accepted unless checks pass or an explicit waiver is recorded.
 15. Outcome report includes baseline, metric, period, source/access basis and limitations.
+16. A later rejected/retest-required finding review invalidates a previously verified claim.
+17. Suppression rules cannot be deleted or rewritten; revocation is attributed and logged.
+18. Dispatch state transitions reject illegal jumps and accepted outcomes are terminal facts.
 
 ## Reporting template
 
