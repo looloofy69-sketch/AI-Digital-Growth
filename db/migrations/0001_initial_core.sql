@@ -99,7 +99,7 @@ CREATE TABLE finding_reviews (
 );
 CREATE INDEX finding_reviews_latest_idx ON finding_reviews(finding_id,reviewed_at DESC,id DESC);
 
-CREATE FUNCTION apply_finding_review_result() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE FUNCTION apply_finding_review_result() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.review_result='rejected' THEN
    UPDATE findings SET state='rejected' WHERE id=NEW.finding_id AND state<>'rejected';
@@ -107,7 +107,7 @@ BEGIN
    UPDATE findings SET state='stale' WHERE id=NEW.finding_id AND state IN ('verified','proposed');
  END IF;
  RETURN NEW;
-END; $;
+END; $$;
 CREATE TRIGGER apply_finding_review_result AFTER INSERT ON finding_reviews
  FOR EACH ROW EXECUTE FUNCTION apply_finding_review_result();
 
@@ -164,7 +164,7 @@ CREATE TABLE suppression_events (
  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(), event_metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
-CREATE FUNCTION enforce_suppression_rule_lifecycle() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE FUNCTION enforce_suppression_rule_lifecycle() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' THEN
    RAISE EXCEPTION 'suppression rules cannot be deleted; revoke with an attributable event';
@@ -185,11 +185,11 @@ BEGIN
    RAISE EXCEPTION 'revocation requires actor, timestamp, and reason';
  END IF;
  RETURN NEW;
-END; $;
+END; $$;
 CREATE TRIGGER suppression_rule_lifecycle BEFORE UPDATE OR DELETE ON suppression_rules
  FOR EACH ROW EXECUTE FUNCTION enforce_suppression_rule_lifecycle();
 
-CREATE FUNCTION audit_suppression_rule_change() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE FUNCTION audit_suppression_rule_change() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='INSERT' THEN
    INSERT INTO suppression_events(id,suppression_rule_id,event_type,actor,reason,occurred_at,event_metadata)
@@ -201,7 +201,7 @@ BEGIN
            jsonb_build_object('scope_type',NEW.scope_type,'scope_key',NEW.scope_key,'channel',NEW.channel));
  END IF;
  RETURN NEW;
-END; $;
+END; $$;
 CREATE TRIGGER suppression_rule_audit AFTER INSERT OR UPDATE OF status ON suppression_rules
  FOR EACH ROW EXECUTE FUNCTION audit_suppression_rule_change();
 
@@ -396,7 +396,7 @@ BEGIN
  END IF;
  RETURN NEW;
 END; $$;
-CREATE FUNCTION enforce_dispatch_transition() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE FUNCTION enforce_dispatch_transition() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE allowed BOOLEAN := FALSE;
 BEGIN
  IF TG_OP='INSERT' THEN
@@ -443,11 +443,11 @@ BEGIN
    RAISE EXCEPTION 'provider message ID may only be set on accepted status';
  END IF;
  RETURN NEW;
-END; $;
+END; $$;
 CREATE TRIGGER dispatch_transition_guard BEFORE INSERT OR UPDATE ON dispatch_attempts
  FOR EACH ROW EXECUTE FUNCTION enforce_dispatch_transition();
 
-CREATE FUNCTION audit_dispatch_state_change() RETURNS trigger LANGUAGE plpgsql AS $
+CREATE FUNCTION audit_dispatch_state_change() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='INSERT' OR NEW.status IS DISTINCT FROM OLD.status THEN
    INSERT INTO dispatch_events(id,dispatch_attempt_id,event_type,occurred_at,reason,event_metadata)
@@ -455,7 +455,7 @@ BEGIN
            NEW.last_error_summary,jsonb_build_object('attempt_count',NEW.attempt_count,'provider_name',NEW.provider_name));
  END IF;
  RETURN NEW;
-END; $;
+END; $$;
 CREATE TRIGGER dispatch_state_audit AFTER INSERT OR UPDATE OF status ON dispatch_attempts
  FOR EACH ROW EXECUTE FUNCTION audit_dispatch_state_change();
 
