@@ -190,15 +190,15 @@ BEGIN
  IF TG_OP='DELETE' THEN
    RAISE EXCEPTION 'suppression rules cannot be deleted; revoke with an attributable event';
  END IF;
- IF OLD.status<>'active' OR NEW.status<>'revoked' THEN
-   RAISE EXCEPTION 'suppression rules may only transition once from active to revoked';
- END IF;
  IF NEW.id IS DISTINCT FROM OLD.id OR NEW.subject_type IS DISTINCT FROM OLD.subject_type
     OR NEW.subject_hash IS DISTINCT FROM OLD.subject_hash OR NEW.channel IS DISTINCT FROM OLD.channel
     OR NEW.scope_type IS DISTINCT FROM OLD.scope_type OR NEW.scope_key IS DISTINCT FROM OLD.scope_key
     OR NEW.reason IS DISTINCT FROM OLD.reason OR NEW.created_by IS DISTINCT FROM OLD.created_by
     OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
    RAISE EXCEPTION 'suppression rule identity and creation facts are immutable';
+ END IF;
+ IF OLD.status<>'active' OR NEW.status<>'revoked' THEN
+   RAISE EXCEPTION 'suppression rules may only transition once from active to revoked';
  END IF;
  IF NEW.revoked_by IS NULL OR length(trim(NEW.revoked_by))=0
     OR NEW.revoked_at IS NULL OR NEW.revoked_at<OLD.created_at
